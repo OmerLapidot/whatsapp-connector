@@ -112,3 +112,7 @@ test('schedule list / cancel / confirm', () => {
   assert.deepStrictEqual(parseArgs(['schedule-confirm', 'tok1']), { cmd: 'scheduleConfirm', args: { token: 'tok1' } });
   assert.strictEqual(parseArgs(['schedule-confirm']), null);
 });
+
+test('read --all sets the all flag (unclamped full-chat read)', () => {
+  assert.deepStrictEqual(parseArgs(['read', 'poker', '--all']), { cmd: 'read', args: { chat: 'poker', all: true } });
+});

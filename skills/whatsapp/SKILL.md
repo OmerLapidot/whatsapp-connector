@@ -12,7 +12,7 @@ Drive the user's WhatsApp via the `wa` CLI, which talks to an always-on local da
 ## Reading (allowed freely)
 
 - `wa chats` — list chats/groups
-- `wa read "<chat>" --limit 30` — recent messages (each has an `id` for reactions)
+- `wa read "<chat>" [--limit 30 | --all]` — recent messages (each has an `id` for reactions). `--all` reads the WHOLE chat (every synced message), bypassing the 200 cap — use sparingly: a busy chat can be thousands of messages (large payload + heavy on your context)
 - `wa search "<query>" [--chat "<chat>"]` — find messages
 - `wa members "<group>"` — who is in a group
 - `wa contacts "<query>"` — resolve a name/number
@@ -38,6 +38,10 @@ Everything prints as JSON (or a plain string). Shapes you can rely on:
   - `ts` is a UNIX timestamp in **seconds** (multiply by 1000 for a JS `Date`).
   - `--limit` is capped at **200** (MAX_LIMIT); a busier chat returns only its most
     recent 200, so a chat sitting at exactly 200 means "≥200", not exactly 200.
+    Pass **`--all`** to bypass the cap and fetch every message — but "every" means
+    every message **synced** into the Web session, NOT the full lifetime history
+    (a freshly linked device backfills older messages over time), and a big chat
+    can return thousands of messages at once.
 - **`wa status`** → `{ state, ready, syncPercent }`; `state` ∈
   `starting | needs-login | syncing | ready | auth-failure | disconnected`.
 - **Errors** come back as `{ ok:false, error, code }` with codes like

@@ -451,3 +451,9 @@ test('sanitizeName neutralizes bidi overrides, zero-width, and NBSP in dialog na
   assert.ok(!/[‪-‮⁦-⁩​-‏﻿ ]/.test(msg), 'no bidi/zero-width/NBSP chars survive in the dialog');
   assert.ok(msg.includes('(x@g.us)'), 'the real chat id is still shown intact');
 });
+
+test('read --all bypasses MAX_LIMIT and fetches with Infinity', async () => {
+  const c = ctx();
+  await handle({ cmd: 'read', args: { chat: 'poker', all: true } }, c);
+  assert.strictEqual(c.session.lastReadLimit, Infinity);
+});

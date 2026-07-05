@@ -77,7 +77,9 @@ async function handle({ cmd, args = {} }, ctx) {
     case 'chats': return session.listChats();
     case 'read': {
       const chat = await resolveOrThrow(session, args.chat);
-      const messages = await session.readMessages(chat.id, clampLimit(args.limit, defaults));
+      // --all fetches every synced message (Infinity); otherwise clamp to MAX_LIMIT.
+      const limit = args.all ? Infinity : clampLimit(args.limit, defaults);
+      const messages = await session.readMessages(chat.id, limit);
       return { chat: chat.name, id: chat.id, messages };
     }
     case 'search': {

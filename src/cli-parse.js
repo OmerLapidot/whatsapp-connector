@@ -26,7 +26,12 @@ function parseArgs(argv) {
     case 'status':
     case 'ping': return { cmd: 'status', args: {} };
     case 'chats': return { cmd: 'chats', args: {} };
-    case 'read': return pos[0] ? { cmd: 'read', args: withLimit({ chat: pos[0] }) } : null;
+    case 'read': {
+      if (!pos[0]) return null;
+      const args = withLimit({ chat: pos[0] });
+      if (flags.all) args.all = true;   // --all → read the whole chat (bypasses MAX_LIMIT)
+      return { cmd: 'read', args };
+    }
     case 'search': return pos[0] ? { cmd: 'search', args: withLimit(flags.chat ? { query: pos[0], chat: flags.chat } : { query: pos[0] }) } : null;
     case 'members': return pos[0] ? { cmd: 'members', args: { group: pos[0] } } : null;
     case 'contacts': return pos[0] ? { cmd: 'contacts', args: { query: pos[0] } } : null;
