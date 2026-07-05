@@ -27,10 +27,13 @@ function createRecovery({
 } = {}) {
   let timer = null;
   let softAttempt = 0;
+  let stopped = false;
   let phase = 'starting';   // starting | recovering | relinking | ready | waiting-human | stopped
 
   function clear() { if (timer) { clearTimer(timer); timer = null; } }
-  function arm() { clear(); timer = setTimer(onTimeout, readyTimeoutMs); }
+  // `stopped` guard: an onTimeout already awaiting a reset must not re-arm after
+  // a concurrent stop() (shutdown) has fired.
+  function arm() { if (stopped) return; clear(); timer = setTimer(onTimeout, readyTimeoutMs); }
 
   async function onTimeout() {
     timer = null;
@@ -53,12 +56,12 @@ function createRecovery({
 
   return {
     // Client initialization has begun; start (or restart) the watchdog.
-    onInitStarted() { phase = 'starting'; arm(); },
+    onInitStarted() { stopped = false; phase = 'starting'; arm(); },
     // whatsapp-web.js `ready` fired: healthy. Cancel the watchdog, reset budget.
     onReady() { clear(); softAttempt = 0; phase = 'ready'; },
     // A login QR is on screen: waiting on a human, not a hang. Cancel watchdog.
     onWaitingForHuman() { clear(); phase = 'waiting-human'; },
-    stop() { clear(); phase = 'stopped'; },
+    stop() { stopped = true; clear(); phase = 'stopped'; },
     snapshot() { return { phase, softAttempt, maxSoft }; },
   };
 }

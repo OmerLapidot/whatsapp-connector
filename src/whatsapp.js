@@ -20,7 +20,13 @@ function makeSession({ log, sync = {}, recovery: recoveryCfg = {} }) {
   // (which would schedule a process.exit) in the middle of a recovery recycle.
   async function destroyQuietly() {
     try { client.removeAllListeners(); } catch (_) {}
-    try { await client.destroy(); } catch (_) {}
+    // Bound the teardown: a hung destroy() must not freeze the recovery ladder.
+    try {
+      await Promise.race([
+        Promise.resolve(client.destroy()).catch(() => {}),
+        new Promise((res) => setTimeout(res, 10000)),
+      ]);
+    } catch (_) {}
   }
 
   // (Re)build a fully wired client. Called on first start and on every recovery

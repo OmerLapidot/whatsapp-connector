@@ -94,6 +94,7 @@ test('onReady clears the watchdog and resets the soft budget', async () => {
 test('onWaitingForHuman (QR shown) cancels the watchdog — not treated as a hang', () => {
   const { r, t } = build();
   r.onInitStarted();
+  assert.strictEqual(t.pending(), true);
   r.onWaitingForHuman();
   assert.strictEqual(t.pending(), false);
   assert.strictEqual(r.snapshot().phase, 'waiting-human');
@@ -102,6 +103,20 @@ test('onWaitingForHuman (QR shown) cancels the watchdog — not treated as a han
 test('stop cancels the watchdog', () => {
   const { r, t } = build();
   r.onInitStarted();
+  assert.strictEqual(t.pending(), true);
   r.stop();
   assert.strictEqual(t.pending(), false);
+});
+
+test('stop() during an in-flight recovery suppresses the re-arm', async () => {
+  const t = fakeTimers();
+  let r;
+  const softReset = async () => { r.stop(); };   // stop lands mid-recovery
+  r = createRecovery({
+    readyTimeoutMs: 1000, maxSoft: 3, softReset, hardReset: spy(), exit: spy(),
+    log: () => {}, setTimer: t.setTimer, clearTimer: t.clearTimer,
+  });
+  r.onInitStarted();
+  await t.fire();
+  assert.strictEqual(t.pending(), false, 'a stop during recovery must not re-arm the watchdog');
 });
