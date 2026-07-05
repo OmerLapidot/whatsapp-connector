@@ -26,7 +26,11 @@ function probe(sockPath) {
 }
 
 async function main() {
-  const session = makeSession({ log, sync: { quietMs: config.SYNC_QUIET_MS, maxMs: config.SYNC_MAX_MS } });
+  const session = makeSession({
+    log,
+    sync: { quietMs: config.SYNC_QUIET_MS, maxMs: config.SYNC_MAX_MS },
+    recovery: { readyTimeoutMs: config.READY_TIMEOUT_MS, maxSoft: config.MAX_SOFT_RECOVERIES },
+  });
   const pending = createPendingStore();
   const scheduler = createScheduler({
     storePath: config.SCHEDULES_PATH,

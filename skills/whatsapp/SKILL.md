@@ -45,8 +45,9 @@ Everything prints as JSON (or a plain string). Shapes you can rely on:
     (re)start most chats read only their newest message or two and re-deepen as the
     session re-syncs. So a low `--all` count can mean "not synced yet," not "that's
     the whole chat." A big, warmed chat can return thousands of messages at once.
-- **`wa status`** → `{ state, ready, syncPercent }`; `state` ∈
-  `starting | needs-login | syncing | ready | auth-failure | disconnected`.
+- **`wa status`** → `{ state, ready, syncPercent }` (plus `recovery: {attempt, max}`
+  while self-recovering); `state` ∈ `starting | needs-login | syncing | ready |
+  recovering | relinking | auth-failure | disconnected`.
 - **Errors** come back as `{ ok:false, error, code }` with codes like
   `NOT_ALLOWED` (chat not on the allow-list), `NOT_APPROVED` (human denied or the
   dialog timed out), `AMBIGUOUS` (name matched >1 chat), `NOT_FOUND`.
@@ -110,3 +111,20 @@ queued while it was off, and commands fail with "not ready (state: syncing)".
 This is normal and self-clears within a few seconds (up to ~60s if a lot
 queued). Poll `wa status` until `ready: true`, then proceed — don't tell the
 user the daemon is down.
+
+## Auto-recovery (a stuck daemon heals itself)
+
+If WhatsApp Web authenticates but never signals `ready` (an intermittent hang,
+usually just after a restart), the daemon now recovers on its own — and shows
+the stage in `wa status`:
+
+- `state: "recovering"` with `recovery: {attempt, max}` — it's recycling the
+  client, **reusing the on-disk session (no QR)**. Just keep polling `wa status`;
+  do NOT restart the daemon yourself while it's recovering.
+- `state: "relinking"` — the soft retries were exhausted, so it moved the session
+  aside and a **new QR scan is required**. This becomes `needs-login` once the QR
+  is ready: tell the user to scan it (see "If the daemon is down" — the QR only
+  shows in a foreground `node index.js`).
+
+So a temporary `recovering`/`syncing` status is the daemon fixing itself, not a
+failure — report it calmly and wait.

@@ -4,22 +4,55 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createSyncTracker } = require('./sync-state');
+const { createRecovery } = require('./recovery');
 
-function makeSession({ log, sync = {} }) {
+function makeSession({ log, sync = {}, recovery: recoveryCfg = {} }) {
   // The tracker owns readiness: it holds `ready` until offline-message delivery
   // settles, not merely until the chat list syncs. See src/sync-state.js.
   const tracker = createSyncTracker({ quietMs: sync.quietMs, maxMs: sync.maxMs, log });
-  const client = new Client({ authStrategy: new LocalAuth() });
 
-  client.on('qr', (qr) => { tracker.onQr(); log('Scan to log in (Linked Devices):'); qrcode.generate(qr, { small: true }); });
-  client.on('loading_screen', (percent) => tracker.onLoadingScreen(percent));
-  client.on('ready', () => { tracker.onReady(); log('WhatsApp app-state synced; settling offline messages…'); });
-  client.on('auth_failure', (m) => { tracker.onAuthFailure(); log('AUTH FAILURE:', m); });
-  client.on('disconnected', (r) => {
-    tracker.onDisconnected();
-    log('DISCONNECTED:', r, '-> exiting for launchd restart');
-    setTimeout(() => process.exit(1), 1500);
+  // Session store on disk. Pinned to the repo (not cwd-relative) so the hard-reset
+  // move below always targets the exact directory LocalAuth actually uses.
+  const AUTH_DIR = path.join(__dirname, '..', '.wwebjs_auth');
+
+  let client;
+  async function destroyQuietly() { try { await client.destroy(); } catch (_) {} }
+
+  // (Re)build a fully wired client. Called on first start and on every recovery
+  // so a recycled client re-attaches the same event handlers.
+  function buildClient() {
+    const c = new Client({ authStrategy: new LocalAuth({ dataPath: AUTH_DIR }) });
+    c.on('qr', (qr) => { tracker.onQr(); recovery.onWaitingForHuman(); log('Scan to log in (Linked Devices):'); qrcode.generate(qr, { small: true }); });
+    c.on('loading_screen', (percent) => tracker.onLoadingScreen(percent));
+    c.on('ready', () => { tracker.onReady(); recovery.onReady(); log('WhatsApp app-state synced; settling offline messages…'); });
+    c.on('auth_failure', (m) => { tracker.onAuthFailure(); log('AUTH FAILURE:', m); });
+    c.on('disconnected', (r) => {
+      tracker.onDisconnected();
+      recovery.stop();
+      log('DISCONNECTED:', r, '-> exiting for launchd restart');
+      setTimeout(() => process.exit(1), 1500);
+    });
+    return c;
+  }
+
+  // Watchdog: if auth succeeds but `ready` never fires, soft-recover (reuse the
+  // on-disk session, no QR) a few times, then hard re-link (fresh QR). See recovery.js.
+  const recovery = createRecovery({
+    readyTimeoutMs: recoveryCfg.readyTimeoutMs,
+    maxSoft: recoveryCfg.maxSoft,
+    log,
+    softReset: async () => { await destroyQuietly(); client = buildClient(); await client.initialize(); },
+    hardReset: async () => {
+      await destroyQuietly();
+      try {
+        if (fs.existsSync(AUTH_DIR)) fs.renameSync(AUTH_DIR, AUTH_DIR + '.stuck-' + Date.now());
+      } catch (e) { log('could not move session aside for re-link: ' + (e && e.message)); }
+      client = buildClient();
+      await client.initialize();
+    },
   });
+
+  client = buildClient();
 
   function ensureReady() {
     const snap = tracker.snapshot();
@@ -37,8 +70,16 @@ function makeSession({ log, sync = {} }) {
   }
 
   return {
-    start() { return client.initialize(); },
-    async status() { return tracker.snapshot(); },
+    start() { recovery.onInitStarted(); return client.initialize(); },
+    async status() {
+      const snap = tracker.snapshot();
+      const r = recovery.snapshot();
+      // Surface recovery stages so `wa status` stays informative during a stall.
+      if (r.phase === 'recovering' || r.phase === 'relinking') {
+        return { ...snap, state: r.phase, recovery: { attempt: r.softAttempt, max: r.maxSoft } };
+      }
+      return snap;
+    },
 
     async listChats() {
       ensureReady();
@@ -139,7 +180,7 @@ function makeSession({ log, sync = {} }) {
       return { ok: true };
     },
 
-    async stop() { try { await client.destroy(); } catch (_) {} },
+    async stop() { recovery.stop(); await destroyQuietly(); },
   };
 }
 
