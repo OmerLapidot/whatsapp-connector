@@ -20,6 +20,30 @@ Drive the user's WhatsApp via the `wa` CLI, which talks to an always-on local da
 
 Chats are addressed by name (fuzzy) or exact id. If `wa` reports the name is ambiguous, show the candidates and ask which one.
 
+## Response shapes (verified against a live account)
+
+Everything prints as JSON (or a plain string). Shapes you can rely on:
+
+- **`wa chats`** → array of `{ id, name, unread }`, **ordered most-recently-active first**.
+  The `id` suffix is the chat type:
+  - `…@g.us` — a group
+  - `…@lid` — an individual person (WhatsApp's current per-contact id). The older
+    `…@c.us` form can also appear; treat BOTH as 1:1 people. To filter to real
+    people, exclude `@g.us` — do NOT match on `@c.us` alone (modern accounts return
+    `@lid` and you'll get zero results).
+- **`wa read`** → `{ chat, id, messages: [ … ] }`, oldest→newest. Each message is
+  `{ id, sender, ts, text, hasMedia }`:
+  - `sender` is the literal string `"me"` for the user's own messages, otherwise the
+    counterparty's chat id — so message direction is just `sender === "me"`.
+  - `ts` is a UNIX timestamp in **seconds** (multiply by 1000 for a JS `Date`).
+  - `--limit` is capped at **200** (MAX_LIMIT); a busier chat returns only its most
+    recent 200, so a chat sitting at exactly 200 means "≥200", not exactly 200.
+- **`wa status`** → `{ state, ready, syncPercent }`; `state` ∈
+  `starting | needs-login | syncing | ready | auth-failure | disconnected`.
+- **Errors** come back as `{ ok:false, error, code }` with codes like
+  `NOT_ALLOWED` (chat not on the allow-list), `NOT_APPROVED` (human denied or the
+  dialog timed out), `AMBIGUOUS` (name matched >1 chat), `NOT_FOUND`.
+
 ## Sending (two-step — read this every time)
 
 `wa send` and `wa send-media` do NOT transmit. They return a `token` + a `preview`. To actually send:
@@ -51,8 +75,25 @@ run it only after the user agrees, and remind them to expect the dialog.
 
 ## If the daemon is down
 
-If `wa` prints "daemon is not running", tell the user to run `./bot.sh start`
-from `{{WA_DIR}}`. Do not attempt to start WhatsApp yourself.
+If `wa` prints "daemon is not running", start it yourself:
+
+    {{WA_DIR}}/bot.sh start
+
+On macOS this registers a launchd agent (`com.whatsapp-connector.daemon`) with
+`KeepAlive` + `RunAtLoad`, so the daemon stays up for as long as the Mac is on —
+it relaunches automatically after a crash and at every login. On Linux `bot.sh`
+falls back to a `nohup` background process with a pidfile. Then poll `wa status`
+until `ready: true` (see "Still syncing").
+
+Do NOT run `node index.js` yourself as the long-term daemon — that process dies
+with its terminal. `bot.sh start` is what makes it persistent.
+
+**One exception — a fresh, never-linked machine needs a human for the QR.** If
+after starting, `wa status` reports `state: "needs-login"` (no WhatsApp session
+on disk yet), the login QR renders only to a foreground terminal, which you
+cannot scan. Ask the user to run `node index.js` in a terminal from `{{WA_DIR}}`,
+scan it via WhatsApp → Settings → Linked Devices, wait for `ready`, then Ctrl+C
+and run `{{WA_DIR}}/bot.sh start` for the persistent daemon.
 
 ## Still syncing (just after a restart)
 
