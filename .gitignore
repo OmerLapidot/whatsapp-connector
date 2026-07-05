@@ -1,0 +1,10 @@
+node_modules/
+.wwebjs_auth*/
+.wwebjs_cache/
+allowlist.json
+schedules.json
+control.sock
+daemon.pid
+*.log
+.superpowers/
+.claude/settings.local.json

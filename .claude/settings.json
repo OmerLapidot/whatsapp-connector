@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(./allowlist.json)",
+      "Write(./allowlist.json)"
+    ]
+  }
+}

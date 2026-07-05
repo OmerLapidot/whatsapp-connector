@@ -1,0 +1,18 @@
+{
+  "name": "whatsapp-connector",
+  "version": "1.0.0",
+  "description": "Always-on local WhatsApp daemon + wa CLI + Claude Code skill. Agents read freely; sends require a human-approved allow-list guarded by native OS dialogs.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["whatsapp", "whatsapp-web", "cli", "claude", "ai-agent", "allowlist", "daemon"],
+  "author": "Omer",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.7"
+  }
+}

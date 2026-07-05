@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+const { SOCKET_PATH } = require('../src/config');
+const { parseArgs } = require('../src/cli-parse');
+const { rpc } = require('../src/rpc-client');
+
+const USAGE = 'usage: wa <status|chats|read|search|members|contacts|media|send|send-media|send-confirm|schedule|schedule-confirm|react|mark-read|allow> ...';
+
+async function main() {
+  const payload = parseArgs(process.argv.slice(2));
+  if (!payload) { console.error(USAGE); process.exit(2); }
+
+  let resp;
+  try {
+    resp = await rpc(SOCKET_PATH, payload);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ECONNREFUSED') {
+      console.error('WhatsApp daemon is not running. Start it with:  ./bot.sh start');
+      process.exit(3);
+    }
+    console.error('error contacting daemon:', err.message);
+    process.exit(1);
+  }
+
+  if (!resp.ok) { console.error('error:', resp.error); process.exit(1); }
+  console.log(typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data, null, 2));
+}
+
+main();
