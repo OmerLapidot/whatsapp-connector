@@ -39,9 +39,12 @@ Everything prints as JSON (or a plain string). Shapes you can rely on:
   - `--limit` is capped at **200** (MAX_LIMIT); a busier chat returns only its most
     recent 200, so a chat sitting at exactly 200 means "≥200", not exactly 200.
     Pass **`--all`** to bypass the cap and fetch every message — but "every" means
-    every message **synced** into the Web session, NOT the full lifetime history
-    (a freshly linked device backfills older messages over time), and a big chat
-    can return thousands of messages at once.
+    every message **currently synced** into the Web session, NOT the full lifetime
+    history. Depth is volatile: a freshly linked device backfills older messages
+    over time, and a **daemon restart flushes the loaded depth** — right after a
+    (re)start most chats read only their newest message or two and re-deepen as the
+    session re-syncs. So a low `--all` count can mean "not synced yet," not "that's
+    the whole chat." A big, warmed chat can return thousands of messages at once.
 - **`wa status`** → `{ state, ready, syncPercent }`; `state` ∈
   `starting | needs-login | syncing | ready | auth-failure | disconnected`.
 - **Errors** come back as `{ ok:false, error, code }` with codes like
