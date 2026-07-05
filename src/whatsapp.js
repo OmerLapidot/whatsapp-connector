@@ -16,7 +16,12 @@ function makeSession({ log, sync = {}, recovery: recoveryCfg = {} }) {
   const AUTH_DIR = path.join(__dirname, '..', '.wwebjs_auth');
 
   let client;
-  async function destroyQuietly() { try { await client.destroy(); } catch (_) {} }
+  // Detach handlers BEFORE destroying so a dying client can't fire `disconnected`
+  // (which would schedule a process.exit) in the middle of a recovery recycle.
+  async function destroyQuietly() {
+    try { client.removeAllListeners(); } catch (_) {}
+    try { await client.destroy(); } catch (_) {}
+  }
 
   // (Re)build a fully wired client. Called on first start and on every recovery
   // so a recycled client re-attaches the same event handlers.
