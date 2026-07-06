@@ -26,4 +26,8 @@ module.exports = {
   // QR). Generous by default so a merely-slow boot never triggers a re-link.
   READY_TIMEOUT_MS: Number(process.env.WA_READY_TIMEOUT_MS) || 90000,
   MAX_SOFT_RECOVERIES: Number(process.env.WA_MAX_SOFT_RECOVERIES) || 3,
+  // Recovery escalates across process restarts, so the attempt count is persisted
+  // here (gitignored). A count older than STALE_MS is ignored on boot.
+  RECOVERY_STATE_PATH: process.env.WA_RECOVERY_STATE || path.join(__dirname, '..', '.recovery-state.json'),
+  RECOVERY_STALE_MS: Number(process.env.WA_RECOVERY_STALE_MS) || 600000,
 };

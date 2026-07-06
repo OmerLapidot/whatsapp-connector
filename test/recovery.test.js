@@ -2,93 +2,102 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { createRecovery } = require('../src/recovery');
 
-// Controllable fake timer: captures the pending callback so a test can fire it.
+const SP = '/tmp/rec-state.json';
+const AUTH = '/tmp/.wwebjs_auth';
+
 function fakeTimers() {
   let cb = null;
-  let id = 0;
   return {
-    setTimer: (fn) => { cb = fn; return ++id; },
+    setTimer: (fn) => { cb = fn; return 1; },
     clearTimer: () => { cb = null; },
     pending: () => cb !== null,
-    async fire() { const f = cb; cb = null; if (f) await f(); },
+    fire() { const f = cb; cb = null; if (f) f(); },
   };
 }
 
-function spy() {
-  const calls = [];
-  const fn = async (...a) => { calls.push(a); };
-  fn.calls = calls;
-  return fn;
+// In-memory fs: files map + dir set, enough for the recovery module's calls.
+function fakeFs(files = {}, dirs = []) {
+  const F = { ...files };
+  const D = new Set(dirs);
+  return {
+    _F: F, _D: D,
+    readFileSync: (p) => { if (!(p in F)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } return F[p]; },
+    writeFileSync: (p, c) => { F[p] = String(c); },
+    unlinkSync: (p) => { if (!(p in F)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } delete F[p]; },
+    existsSync: (p) => (p in F) || D.has(p),
+    renameSync: (a, b) => { if (D.has(a)) { D.delete(a); D.add(b); } if (a in F) { F[b] = F[a]; delete F[a]; } },
+  };
 }
 
-function build(overrides = {}) {
+function spy() { const c = []; const fn = (...a) => { c.push(a); }; fn.calls = c; return fn; }
+
+function build({ fsImpl = fakeFs(), clock = { v: 1000 }, opts = {} } = {}) {
   const t = fakeTimers();
-  const softReset = spy();
-  const hardReset = spy();
   const exit = spy();
   const r = createRecovery({
-    readyTimeoutMs: 1000, maxSoft: 3,
-    softReset, hardReset, exit, log: () => {},
-    setTimer: t.setTimer, clearTimer: t.clearTimer,
-    ...overrides,
+    readyTimeoutMs: 1000, maxSoft: 3, staleMs: 600000, statePath: SP, authDir: AUTH,
+    log: () => {}, setTimer: t.setTimer, clearTimer: t.clearTimer, exit, fsImpl, now: () => clock.v,
+    ...opts,
   });
-  return { r, t, softReset, hardReset, exit };
+  return { r, t, exit, fsImpl, clock };
 }
 
-test('onInitStarted arms the watchdog', () => {
+test('onInitStarted arms the watchdog with a clean slate', () => {
   const { r, t } = build();
-  assert.strictEqual(t.pending(), false);
   r.onInitStarted();
   assert.strictEqual(t.pending(), true);
+  assert.deepStrictEqual(r.snapshot(), { phase: 'starting', softAttempt: 0, maxSoft: 3 });
+});
+
+test('a stall persists the incremented attempt and exits for a launchd relaunch', () => {
+  const { r, t, exit, fsImpl } = build();
+  r.onInitStarted();
+  t.fire();
+  assert.strictEqual(exit.calls.length, 1, 'exited so launchd restarts the process');
+  assert.deepStrictEqual(JSON.parse(fsImpl._F[SP]), { attempts: 1, at: 1000 });
+  assert.strictEqual(r.snapshot().phase, 'recovering');
+  assert.strictEqual(r.snapshot().softAttempt, 1);
+});
+
+test('a later boot resumes the persisted (recent) attempt count', () => {
+  const fsImpl = fakeFs({ [SP]: JSON.stringify({ attempts: 2, at: 900 }) });
+  const { r } = build({ fsImpl, clock: { v: 1000 } });   // 100ms old — fresh
+  r.onInitStarted();
+  assert.strictEqual(r.snapshot().softAttempt, 2);
+  assert.strictEqual(r.snapshot().phase, 'recovering');
+});
+
+test('a stale attempt count is ignored (a manual restart is not pushed toward re-link)', () => {
+  const fsImpl = fakeFs({ [SP]: JSON.stringify({ attempts: 2, at: 0 }) });
+  const { r } = build({ fsImpl, clock: { v: 10_000_000 } });   // way past staleMs
+  r.onInitStarted();
+  assert.strictEqual(r.snapshot().softAttempt, 0);
   assert.strictEqual(r.snapshot().phase, 'starting');
 });
 
-test('timeout triggers a soft reset (no QR), re-arms, and reports the attempt', async () => {
-  const { r, t, softReset, hardReset } = build();
+test('once the soft budget is spent, a stall hard-relinks: moves the session, clears state, exits', () => {
+  const fsImpl = fakeFs({ [SP]: JSON.stringify({ attempts: 3, at: 900 }) }, [AUTH]);
+  const { r, t, exit } = build({ fsImpl, clock: { v: 1000 } });
   r.onInitStarted();
-  await t.fire();
-  assert.strictEqual(softReset.calls.length, 1);
-  assert.strictEqual(hardReset.calls.length, 0);
-  assert.strictEqual(t.pending(), true, 're-armed for the next window');
-  assert.deepStrictEqual(r.snapshot(), { phase: 'recovering', softAttempt: 1, maxSoft: 3 });
-});
-
-test('three soft resets, then the fourth timeout hard-relinks (QR)', async () => {
-  const { r, t, softReset, hardReset } = build();
-  r.onInitStarted();
-  await t.fire(); await t.fire(); await t.fire();
-  assert.strictEqual(softReset.calls.length, 3);
-  assert.strictEqual(hardReset.calls.length, 0);
-  await t.fire();
-  assert.strictEqual(softReset.calls.length, 3, 'no more soft resets after the budget');
-  assert.strictEqual(hardReset.calls.length, 1);
+  assert.strictEqual(r.snapshot().softAttempt, 3);
+  t.fire();
   assert.strictEqual(r.snapshot().phase, 'relinking');
-});
-
-test('if even the hard re-link hangs, exit for a launchd restart', async () => {
-  const { r, t, hardReset, exit } = build();
-  r.onInitStarted();
-  await t.fire(); await t.fire(); await t.fire(); // 3 soft
-  await t.fire();                                  // hard relink
-  assert.strictEqual(hardReset.calls.length, 1);
-  await t.fire();                                  // still stuck after relink
+  assert.strictEqual(fsImpl._D.has(AUTH), false, 'live session dir was moved aside');
+  assert.strictEqual(fsImpl._D.has(AUTH + '.stuck-1000'), true, 'moved to a .stuck- dir (preserved, not deleted)');
+  assert.strictEqual(SP in fsImpl._F, false, 'attempt state cleared for the fresh QR boot');
   assert.strictEqual(exit.calls.length, 1);
 });
 
-test('onReady clears the watchdog and resets the soft budget', async () => {
-  const { r, t, softReset } = build();
+test('onReady cancels the watchdog and clears the persisted ladder', () => {
+  const fsImpl = fakeFs({ [SP]: JSON.stringify({ attempts: 1, at: 900 }) });
+  const { r, t } = build({ fsImpl, clock: { v: 1000 } });
   r.onInitStarted();
-  await t.fire();                       // one soft reset
   assert.strictEqual(r.snapshot().softAttempt, 1);
   r.onReady();
   assert.strictEqual(t.pending(), false);
   assert.strictEqual(r.snapshot().phase, 'ready');
   assert.strictEqual(r.snapshot().softAttempt, 0);
-  // a later stall starts the ladder over from soft #1
-  r.onInitStarted();
-  await t.fire();
-  assert.strictEqual(softReset.calls.length, 2);
-  assert.strictEqual(r.snapshot().softAttempt, 1);
+  assert.strictEqual(SP in fsImpl._F, false, 'state file removed on healthy ready');
 });
 
 test('onWaitingForHuman (QR shown) cancels the watchdog — not treated as a hang', () => {
@@ -106,17 +115,4 @@ test('stop cancels the watchdog', () => {
   assert.strictEqual(t.pending(), true);
   r.stop();
   assert.strictEqual(t.pending(), false);
-});
-
-test('stop() during an in-flight recovery suppresses the re-arm', async () => {
-  const t = fakeTimers();
-  let r;
-  const softReset = async () => { r.stop(); };   // stop lands mid-recovery
-  r = createRecovery({
-    readyTimeoutMs: 1000, maxSoft: 3, softReset, hardReset: spy(), exit: spy(),
-    log: () => {}, setTimer: t.setTimer, clearTimer: t.clearTimer,
-  });
-  r.onInitStarted();
-  await t.fire();
-  assert.strictEqual(t.pending(), false, 'a stop during recovery must not re-arm the watchdog');
 });

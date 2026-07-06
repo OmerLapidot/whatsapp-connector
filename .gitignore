@@ -8,3 +8,4 @@ daemon.pid
 *.log
 .superpowers/
 .claude/settings.local.json
+.recovery-state.json

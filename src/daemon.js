@@ -29,7 +29,12 @@ async function main() {
   const session = makeSession({
     log,
     sync: { quietMs: config.SYNC_QUIET_MS, maxMs: config.SYNC_MAX_MS },
-    recovery: { readyTimeoutMs: config.READY_TIMEOUT_MS, maxSoft: config.MAX_SOFT_RECOVERIES },
+    recovery: {
+      readyTimeoutMs: config.READY_TIMEOUT_MS,
+      maxSoft: config.MAX_SOFT_RECOVERIES,
+      staleMs: config.RECOVERY_STALE_MS,
+      statePath: config.RECOVERY_STATE_PATH,
+    },
   });
   const pending = createPendingStore();
   const scheduler = createScheduler({

@@ -11,59 +11,34 @@ function makeSession({ log, sync = {}, recovery: recoveryCfg = {} }) {
   // settles, not merely until the chat list syncs. See src/sync-state.js.
   const tracker = createSyncTracker({ quietMs: sync.quietMs, maxMs: sync.maxMs, log });
 
-  // Session store on disk. Pinned to the repo (not cwd-relative) so the hard-reset
-  // move below always targets the exact directory LocalAuth actually uses.
+  // Session store on disk. Pinned to the repo (not cwd-relative) so the recovery
+  // re-link move targets the exact directory LocalAuth actually uses.
   const AUTH_DIR = path.join(__dirname, '..', '.wwebjs_auth');
 
-  let client;
-  // Detach handlers BEFORE destroying so a dying client can't fire `disconnected`
-  // (which would schedule a process.exit) in the middle of a recovery recycle.
-  async function destroyQuietly() {
-    try { client.removeAllListeners(); } catch (_) {}
-    // Bound the teardown: a hung destroy() must not freeze the recovery ladder.
-    try {
-      await Promise.race([
-        Promise.resolve(client.destroy()).catch(() => {}),
-        new Promise((res) => setTimeout(res, 10000)),
-      ]);
-    } catch (_) {}
-  }
-
-  // (Re)build a fully wired client. Called on first start and on every recovery
-  // so a recycled client re-attaches the same event handlers.
-  function buildClient() {
-    const c = new Client({ authStrategy: new LocalAuth({ dataPath: AUTH_DIR }) });
-    c.on('qr', (qr) => { tracker.onQr(); recovery.onWaitingForHuman(); log('Scan to log in (Linked Devices):'); qrcode.generate(qr, { small: true }); });
-    c.on('loading_screen', (percent) => tracker.onLoadingScreen(percent));
-    c.on('ready', () => { tracker.onReady(); recovery.onReady(); log('WhatsApp app-state synced; settling offline messages…'); });
-    c.on('auth_failure', (m) => { tracker.onAuthFailure(); log('AUTH FAILURE:', m); });
-    c.on('disconnected', (r) => {
-      tracker.onDisconnected();
-      recovery.stop();
-      log('DISCONNECTED:', r, '-> exiting for launchd restart');
-      setTimeout(() => process.exit(1), 1500);
-    });
-    return c;
-  }
-
-  // Watchdog: if auth succeeds but `ready` never fires, soft-recover (reuse the
-  // on-disk session, no QR) a few times, then hard re-link (fresh QR). See recovery.js.
+  // Watchdog: if auth succeeds but `ready` never fires, RECOVER BY RESTARTING THE
+  // PROCESS (a fresh Chrome, no profile-lock fight) — soft ×N reusing the session
+  // (no QR), then a hard re-link (fresh QR). launchd relaunches on exit. recovery.js.
   const recovery = createRecovery({
     readyTimeoutMs: recoveryCfg.readyTimeoutMs,
     maxSoft: recoveryCfg.maxSoft,
+    staleMs: recoveryCfg.staleMs,
+    statePath: recoveryCfg.statePath,
+    authDir: AUTH_DIR,
     log,
-    softReset: async () => { await destroyQuietly(); client = buildClient(); await client.initialize(); },
-    hardReset: async () => {
-      await destroyQuietly();
-      try {
-        if (fs.existsSync(AUTH_DIR)) fs.renameSync(AUTH_DIR, AUTH_DIR + '.stuck-' + Date.now());
-      } catch (e) { log('could not move session aside for re-link: ' + (e && e.message)); }
-      client = buildClient();
-      await client.initialize();
-    },
   });
 
-  client = buildClient();
+  const client = new Client({ authStrategy: new LocalAuth({ dataPath: AUTH_DIR }) });
+
+  client.on('qr', (qr) => { tracker.onQr(); recovery.onWaitingForHuman(); log('Scan to log in (Linked Devices):'); qrcode.generate(qr, { small: true }); });
+  client.on('loading_screen', (percent) => tracker.onLoadingScreen(percent));
+  client.on('ready', () => { tracker.onReady(); recovery.onReady(); log('WhatsApp app-state synced; settling offline messages…'); });
+  client.on('auth_failure', (m) => { tracker.onAuthFailure(); log('AUTH FAILURE:', m); });
+  client.on('disconnected', (r) => {
+    tracker.onDisconnected();
+    recovery.stop();
+    log('DISCONNECTED:', r, '-> exiting for launchd restart');
+    setTimeout(() => process.exit(1), 1500);
+  });
 
   function ensureReady() {
     const snap = tracker.snapshot();
@@ -191,7 +166,7 @@ function makeSession({ log, sync = {}, recovery: recoveryCfg = {} }) {
       return { ok: true };
     },
 
-    async stop() { recovery.stop(); await destroyQuietly(); },
+    async stop() { recovery.stop(); try { await client.destroy(); } catch (_) {} },
   };
 }
 
