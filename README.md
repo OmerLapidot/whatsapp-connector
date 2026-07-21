@@ -125,6 +125,11 @@ Environment variables (defaults in `src/config.js`): `WA_SOCKET`,
 
 `npm test` — pure-Node test suite (`node:test`), no WhatsApp connection needed.
 
+## Why I built this
+
+I wrote up how this was built and what it taught me:
+[English](https://hopala.io/en/blog/whatsapp-into-claude.html) · [עברית](https://hopala.io/blog/whatsapp-into-claude.html)
+
 ## License
 
 MIT
